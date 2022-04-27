@@ -41,7 +41,20 @@ body {
 .input {
   display: flex;
   align-items: center;
+  font-size: 12px;
   margin-bottom: 20px;
+  position: relative;
+}
+
+.input[data-reading]:before {
+  content: attr(data-reading);
+  position: absolute;
+  top: -15px;
+  left: 20px;
+  background: #202020;
+  padding: 3px 8px;
+  font-size: 10px;
+  border-radius: 5px 5px 0 0;
 }
 
 input[type=file] {
@@ -61,6 +74,17 @@ input[type=file] {
   margin-bottom: 10px;
 }
 
+.photos {
+  margin-top: 20px;
+  height: 120px;
+}
+
+.photos img {
+  width: 90px;
+  height: 90px;
+  margin: 10px;
+}
+
 @media (prefers-color-scheme: dark) {
   html {
     background: #323232;
@@ -77,7 +101,7 @@ input[type=file] {
 <body>
 <div class="pad">Loading...</div>
 <script type="module">
-  import { html, render, useCallback, useEffect, useRef } from 'https://unpkg.com/htm@3.1.0/preact/standalone.module.js'
+  import { html, render, useCallback, useEffect, useRef, useState } from 'https://unpkg.com/htm@3.1.0/preact/standalone.module.js'
   import 'https://unpkg.com/esbuild-wasm@0.14.26/wasm_exec.js'
   // import './wasm_exec.js'
 
@@ -85,6 +109,29 @@ input[type=file] {
 
   function App (props) {
     const resultArea = useRef(null)
+    const [ photos, setPhotos ] = useState([])
+    const [ reading, setReading ] = useState(null)
+    const [ processing, setProcessing ] = useState(null)
+
+    useEffect(() => {
+      window._images = data => {
+        const items = []
+        for (const page in data.query.pages) {
+          const info = data.query.pages[page].imageinfo[0]
+          const url = info.thumburl
+          if (/\.(jpeg|jpg|png)$/i.test(url)) {
+            items.push([url, info.descriptionurl])
+          }
+          if (items.length > 10) break
+        }
+        setPhotos(items)
+      }
+      const script = document.createElement('script')
+      const url = `https://commons.wikimedia.org/w/api.php?action=query&generator=categorymembers` +
+        `&gcmtitle=Category:Quick_Response_Codes&gcmlimit=20&gcmtype=file&prop=imageinfo&iiprop=url&iiurlwidth=1024&format=json&callback=_images`
+      script.setAttribute('src', url)
+      document.head.appendChild(script)
+    }, [])
 
     function showError (err) {
       render(html`<div class="error">${err.toString()}</div>`, resultArea.current)
@@ -113,6 +160,7 @@ input[type=file] {
     const fileChanged = useCallback((e) => {
       const files = e.target.files
       if (files.length === 0) return
+      setReading(null)
       ReadQR().then(writer => {
         const file = files[0]
         const total = file.size
@@ -130,6 +178,7 @@ input[type=file] {
             return
           }
           offset += written
+          setReading(`${Math.min(Math.ceil(offset / total * 100), 100)}%`)
           if (offset < total) {
             read()
           } else {
@@ -143,8 +192,10 @@ input[type=file] {
         return writer.next
       }).then(result => {
         render(html`<div>${result}</div>`, resultArea.current)
+        setReading(null)
       }, err => {
         showError(err)
+        setReading(null)
       })
     }, [])
 
@@ -165,17 +216,37 @@ input[type=file] {
             continue
           }
           found = true
-          data[i].getType('image/png').then(blob => blob.arrayBuffer()).then(buffer => {
+          setProcessing(`0%`)
+          data[i].getType('image/png').then(blob => {
             ReadQR().then(writer => {
-              writer.write(new Uint8Array(buffer))
-              writer.close()
+              const total = blob.size
+              const chunkSize = 1024 * 100
+              let offset = 0
+              function read () {
+                return blob.slice(offset, offset + chunkSize).arrayBuffer().then(buffer => {
+                  writer.write(new Uint8Array(buffer))
+                }).finally(() => {
+                  offset += chunkSize
+                  setProcessing(`${Math.min(Math.ceil(offset / total * 100), 100)}%`)
+                  if (offset < total) {
+                    return read()
+                  }
+                })
+              }
+              read().finally(() => {
+                writer.close()
+              })
               return writer.next
             }).then(result => {
               render(html`<div>${result}</div>`, resultArea.current)
+              setProcessing(null)
             }, err => {
               showError(err)
+              setProcessing(null)
             })
+
           })
+          return
         }
         if (!found) showError('No image data on clipboard.')
       }, err => {
@@ -185,13 +256,24 @@ input[type=file] {
 
     return html`
       <div class="main">
-        <div class="input">
-          <input type="file" onChange=${fileChanged} />
-          <div style="margin: 0 10px">or</div>
-          <button class="read-cb" onClick=${readClipboard}>Read from clipboard</button>
+        <div class="input" data-reading=${reading}>
+          <input type="file" onChange=${fileChanged} disabled=${!!reading} />
+          <span style="margin: 0 10px">or</span>
+          <button class="read-cb" onClick=${readClipboard} disabled=${!!processing}>
+            Read from clipboard ${processing ? `(${processing})` : ''}
+          </button>
         </div>
         <div class="result-area" ref=${resultArea}></div>
         <button class="select-all" onClick=${selectAll}>Select All</button>
+        <div class="photos">
+          ${photos.length > 0 && html`<div style="text-align: center; font-size: 12px">QR codes from <a
+            href="https://commons.wikimedia.org/wiki/Category:Quick_Response_Codes"
+            target="_blank">Wikimedia Commons</a>. Right click image to copy
+            and click "Read from clipboard" to decode.</div>
+            ${photos.map(photo => (
+              html`<a href=${photo[1]} target="_blank"><img src=${photo[0]} /></a>`
+            ))}`}
+        </div>
         <div style="margin-top: 10px; font-size: 10px">
           <a href="https://github.com/caiguanhao/readqr" target="_blank">Source Code</a>
         </div>
