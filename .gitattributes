@@ -1,1 +1,2 @@
 /update.sh linguist-vendored
+*.html linguist-vendored

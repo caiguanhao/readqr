@@ -3,7 +3,7 @@
 QR code reader (decoder).
 
 - Fork of [github.com/makiuchi-d/gozxing](https://github.com/makiuchi-d/gozxing).
-Only QR code source files are included.
+Only QR code source files are included. To update source code, run `update.sh`.
 - Added WASM support. [Demo](https://caiguanhao.github.io/readqr/wasm/).
 
 ```go
