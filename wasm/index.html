@@ -29,11 +29,25 @@ body {
   color: red;
 }
 
+.pad {
+  display: flex;
+  height: 100%;
+  align-items: center;
+  justify-content: center;
+  font-size: 14px;
+  color: #999;
+}
+
+.input {
+  display: flex;
+  align-items: center;
+  margin-bottom: 20px;
+}
+
 input[type=file] {
   background: #e2e2e2;
   padding: 10px 20px;
   border-radius: 20px;
-  margin-bottom: 20px;
 }
 
 .result-area {
@@ -72,6 +86,10 @@ input[type=file] {
   function App (props) {
     const resultArea = useRef(null)
 
+    function showError (err) {
+      render(html`<div class="error">${err.toString()}</div>`, resultArea.current)
+    }
+
     useEffect(() => {
       if (typeof(ReadQR) === 'function') return
       const go = new Go()
@@ -85,7 +103,7 @@ input[type=file] {
       WebAssembly.instantiateStreaming(fetch('readqr.wasm'), go.importObject).then(result => {
         return go.run(result.instance)
       }, err => {
-        render(html`<div class="error">${err.toString()}</div>`, resultArea.current)
+        showError(err)
       })
       document.addEventListener('ReadQR.Ready', () => {
         render(html`<div>Select an image file containing QR code.</div>`, resultArea.current)
@@ -126,7 +144,7 @@ input[type=file] {
       }).then(result => {
         render(html`<div>${result}</div>`, resultArea.current)
       }, err => {
-        render(html`<div class="error">${err.toString()}</div>`, resultArea.current)
+        showError(err)
       })
     }, [])
 
@@ -134,9 +152,44 @@ input[type=file] {
       window.getSelection().selectAllChildren(e.target.previousSibling)
     }
 
+    function readClipboard () {
+      navigator.permissions.query({ name: 'clipboard-read' }).then((result) => {
+        if (result.state !== 'granted' && result.state !== 'prompt') {
+          return Promise.reject()
+        }
+        return navigator.clipboard.read()
+      }).then(data => {
+        let found = false
+        for (let i = 0; i < data.length; i++) {
+          if (!data[i].types.includes('image/png')) {
+            continue
+          }
+          found = true
+          data[i].getType('image/png').then(blob => blob.arrayBuffer()).then(buffer => {
+            ReadQR().then(writer => {
+              writer.write(new Uint8Array(buffer))
+              writer.close()
+              return writer.next
+            }).then(result => {
+              render(html`<div>${result}</div>`, resultArea.current)
+            }, err => {
+              showError(err)
+            })
+          })
+        }
+        if (!found) showError('No image data on clipboard.')
+      }, err => {
+        showError(err)
+      })
+    }
+
     return html`
       <div class="main">
-        <input type="file" onchange=${fileChanged} />
+        <div class="input">
+          <input type="file" onChange=${fileChanged} />
+          <div style="margin: 0 10px">or</div>
+          <button class="read-cb" onClick=${readClipboard}>Read from clipboard</button>
+        </div>
         <div class="result-area" ref=${resultArea}></div>
         <button class="select-all" onClick=${selectAll}>Select All</button>
         <div style="margin-top: 10px; font-size: 10px">
