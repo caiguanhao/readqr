@@ -1,0 +1,150 @@
+<html>
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>ReadQR</title>
+<style>
+html {
+  font-family: Arial;
+}
+
+a {
+  color: #666;
+}
+
+body {
+  padding: 0;
+  margin: 0;
+}
+
+.main {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  align-items: center;
+  justify-content: center;
+}
+
+.error {
+  color: red;
+}
+
+input[type=file] {
+  background: #e2e2e2;
+  padding: 10px 20px;
+  border-radius: 20px;
+  margin-bottom: 20px;
+}
+
+.result-area {
+  white-space: pre-wrap;
+  font-family: monospace;
+  background: #e2e2e2;
+  border-radius: 10px;
+  padding: 20px;
+  max-width: 500px;
+  word-break: break-word;
+  margin-bottom: 10px;
+}
+
+@media (prefers-color-scheme: dark) {
+  html {
+    background: #323232;
+    color: #f3f3f3;
+  }
+
+  input[type=file],
+  .result-area {
+    background: #202020;
+  }
+}
+</style>
+</head>
+<body>
+<div class="pad">Loading...</div>
+<script type="module">
+  import { html, render, useCallback, useEffect, useRef } from 'https://unpkg.com/htm@3.1.0/preact/standalone.module.js'
+  import 'https://unpkg.com/esbuild-wasm@0.14.26/wasm_exec.js'
+  // import './wasm_exec.js'
+
+  render(html`<${App} />`, document.body)
+
+  function App (props) {
+    const resultArea = useRef(null)
+
+    useEffect(() => {
+      if (typeof(ReadQR) === 'function') return
+      const go = new Go()
+      if (!WebAssembly.instantiateStreaming) { // polyfill
+        WebAssembly.instantiateStreaming = async (resp, importObject) => {
+          const source = await (await resp).arrayBuffer()
+          return await WebAssembly.instantiate(source, importObject)
+        }
+      }
+      render(html`<div>Loading...</div>`, resultArea.current)
+      WebAssembly.instantiateStreaming(fetch('readqr.wasm'), go.importObject).then(result => {
+        return go.run(result.instance)
+      }, err => {
+        render(html`<div class="error">${err.toString()}</div>`, resultArea.current)
+      })
+      document.addEventListener('ReadQR.Ready', () => {
+        render(html`<div>Select an image file containing QR code.</div>`, resultArea.current)
+      })
+    }, [])
+
+    const fileChanged = useCallback((e) => {
+      const files = e.target.files
+      if (files.length === 0) return
+      ReadQR().then(writer => {
+        const file = files[0]
+        const total = file.size
+        const chunkSize = 1024 * 100
+        let offset = 0
+        const reader = new FileReader()
+        reader.onload = e => {
+          if (e.target.error) {
+            writer.close()
+            return
+          }
+          const written = writer.write(new Uint8Array(e.target.result))
+          if (written < 1) {
+            writer.close()
+            return
+          }
+          offset += written
+          if (offset < total) {
+            read()
+          } else {
+            writer.close()
+          }
+        }
+        function read () {
+          reader.readAsArrayBuffer(file.slice(offset, offset + chunkSize))
+        }
+        read()
+        return writer.next
+      }).then(result => {
+        render(html`<div>${result}</div>`, resultArea.current)
+      }, err => {
+        render(html`<div class="error">${err.toString()}</div>`, resultArea.current)
+      })
+    }, [])
+
+    function selectAll (e) {
+      window.getSelection().selectAllChildren(e.target.previousSibling)
+    }
+
+    return html`
+      <div class="main">
+        <input type="file" onchange=${fileChanged} />
+        <div class="result-area" ref=${resultArea}></div>
+        <button class="select-all" onClick=${selectAll}>Select All</button>
+        <div style="margin-top: 10px; font-size: 10px">
+          <a href="https://github.com/caiguanhao/readqr" target="_blank">Source Code</a>
+        </div>
+      </div>
+    `
+  }
+</script>
+</body>
+</html>
