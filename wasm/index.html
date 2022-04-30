@@ -85,6 +85,33 @@ input[type=file] {
   margin: 10px;
 }
 
+.camera {
+  padding: 20px;
+  position: fixed;
+  top: 0;
+  right: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  z-index: 100;
+  background: rgba(0,0,0,0.7);
+}
+
+.camera-buttons {
+  margin-top: 10px;
+}
+
+.camera-buttons button + button {
+  margin-left: 10px;
+}
+
+video {
+  width: 300px;
+  height: 225px;
+  transform: scaleX(-1);
+}
+
 @media (prefers-color-scheme: dark) {
   html {
     background: #323232;
@@ -112,6 +139,8 @@ input[type=file] {
     const [ photos, setPhotos ] = useState([])
     const [ reading, setReading ] = useState(null)
     const [ processing, setProcessing ] = useState(null)
+    const [ taking, setTaking ] = useState(null)
+    const [ showCamera, setShowCamera ] = useState(false)
 
     useEffect(() => {
       window._images = data => {
@@ -203,6 +232,75 @@ input[type=file] {
       window.getSelection().selectAllChildren(e.target.previousSibling)
     }
 
+    const [ videoTrack, setVideoTrack ] = useState(null)
+
+    function readCamera () {
+      if (showCamera) {
+        closeCamera()
+        return
+      }
+      setTaking(true)
+      navigator.mediaDevices.getUserMedia({ video: true, audio: false }).then(mediaStream => {
+        setTaking(false)
+        setShowCamera(true)
+        setTimeout(() => {
+          const video = document.querySelector('video')
+          video.srcObject = mediaStream
+          video.onloadedmetadata = () => {
+            video.play()
+          }
+          const track = mediaStream.getVideoTracks()[0]
+          setVideoTrack(track)
+        })
+      }, err => {
+        setTaking(false)
+        showError(err)
+      })
+    }
+
+    function takePhoto () {
+      setTaking(`0%`)
+      const imageCapture = new ImageCapture(videoTrack)
+      imageCapture.takePhoto().then(blob => {
+        readBlob(blob, setTaking)
+      })
+    }
+
+    function closeCamera () {
+      if (videoTrack) videoTrack.stop()
+      setShowCamera(false)
+      setVideoTrack(null)
+    }
+
+    function readBlob (blob, progress) {
+      ReadQR().then(writer => {
+        const total = blob.size
+        const chunkSize = 1024 * 100
+        let offset = 0
+        function read () {
+          return blob.slice(offset, offset + chunkSize).arrayBuffer().then(buffer => {
+            writer.write(new Uint8Array(buffer))
+          }).finally(() => {
+            offset += chunkSize
+            progress(`${Math.min(Math.ceil(offset / total * 100), 100)}%`)
+            if (offset < total) {
+              return read()
+            }
+          })
+        }
+        read().finally(() => {
+          writer.close()
+        })
+        return writer.next
+      }).then(result => {
+        render(html`<div>${result}</div>`, resultArea.current)
+        progress(null)
+      }, err => {
+        showError(err)
+        progress(null)
+      })
+    }
+
     function readClipboard () {
       navigator.permissions.query({ name: 'clipboard-read' }).then((result) => {
         if (result.state !== 'granted' && result.state !== 'prompt') {
@@ -218,33 +316,7 @@ input[type=file] {
           found = true
           setProcessing(`0%`)
           data[i].getType('image/png').then(blob => {
-            ReadQR().then(writer => {
-              const total = blob.size
-              const chunkSize = 1024 * 100
-              let offset = 0
-              function read () {
-                return blob.slice(offset, offset + chunkSize).arrayBuffer().then(buffer => {
-                  writer.write(new Uint8Array(buffer))
-                }).finally(() => {
-                  offset += chunkSize
-                  setProcessing(`${Math.min(Math.ceil(offset / total * 100), 100)}%`)
-                  if (offset < total) {
-                    return read()
-                  }
-                })
-              }
-              read().finally(() => {
-                writer.close()
-              })
-              return writer.next
-            }).then(result => {
-              render(html`<div>${result}</div>`, resultArea.current)
-              setProcessing(null)
-            }, err => {
-              showError(err)
-              setProcessing(null)
-            })
-
+            readBlob(blob, setProcessing)
           })
           return
         }
@@ -256,11 +328,22 @@ input[type=file] {
 
     return html`
       <div class="main">
+        ${showCamera && html`<div class="camera">
+          <video></video>
+          <div class="camera-buttons">
+            <button onClick=${takePhoto} disabled=${!!taking}>Take Photo ${taking ? `(${taking})` : ''}</button>
+            <button onClick=${closeCamera}>Close</button>
+          </div>
+        </div>`}
         <div class="input" data-reading=${reading}>
           <input type="file" onChange=${fileChanged} disabled=${!!reading} />
           <span style="margin: 0 10px">or</span>
-          <button class="read-cb" onClick=${readClipboard} disabled=${!!processing}>
+          <button onClick=${readClipboard} disabled=${!!processing}>
             Read from clipboard ${processing ? `(${processing})` : ''}
+          </button>
+          <span style="margin: 0 10px">or</span>
+          <button onClick=${readCamera} disabled=${!!taking}>
+            Read from camera
           </button>
         </div>
         <div class="result-area" ref=${resultArea}></div>
