@@ -51,7 +51,8 @@ body {
   position: absolute;
   top: -15px;
   left: 20px;
-  background: #202020;
+  background: #e2e2e2;
+  color: #636363;
   padding: 3px 8px;
   font-size: 10px;
   border-radius: 5px 5px 0 0;
@@ -72,6 +73,11 @@ input[type=file] {
   max-width: 500px;
   word-break: break-word;
   margin-bottom: 10px;
+}
+
+.result-area.active {
+  background: #ccc;
+  outline: 5px solid #e3e3e3;
 }
 
 .photos {
@@ -182,12 +188,12 @@ video {
         showError(err)
       })
       document.addEventListener('ReadQR.Ready', () => {
-        render(html`<div>Select an image file containing QR code.</div>`, resultArea.current)
+        render(html`<div>Select or drag-drop an image file.</div>`, resultArea.current)
       })
     }, [])
 
     const fileChanged = useCallback((e) => {
-      const files = e.target.files
+      const files = e.target.files || e.dataTransfer.files
       if (files.length === 0) return
       setReading(null)
       ReadQR().then(writer => {
@@ -232,7 +238,7 @@ video {
       window.getSelection().selectAllChildren(e.target.previousSibling)
     }
 
-    const [ videoTrack, setVideoTrack ] = useState(null)
+    const [ stream, setStream ] = useState(null)
 
     function readCamera () {
       if (showCamera) {
@@ -249,8 +255,7 @@ video {
           video.onloadedmetadata = () => {
             video.play()
           }
-          const track = mediaStream.getVideoTracks()[0]
-          setVideoTrack(track)
+          setStream(mediaStream)
         })
       }, err => {
         setTaking(false)
@@ -260,16 +265,36 @@ video {
 
     function takePhoto () {
       setTaking(`0%`)
-      const imageCapture = new ImageCapture(videoTrack)
-      imageCapture.takePhoto().then(blob => {
-        readBlob(blob, setTaking)
-      })
+      if (window.ImageCapture) {
+        const track = stream.getVideoTracks()[0]
+        const imageCapture = new ImageCapture(track)
+        imageCapture.takePhoto().then(blob => {
+          readBlob(blob, setTaking)
+        })
+      } else {
+        const video = document.createElement('video')
+        const canvas = document.createElement('canvas')
+        const context = canvas.getContext('2d')
+        video.srcObject = stream
+        video.addEventListener('loadeddata', () => {
+          const { videoWidth, videoHeight } = video
+          canvas.width = videoWidth
+          canvas.height = videoHeight
+          context.drawImage(video, 0, 0, videoWidth, videoHeight)
+          canvas.toBlob((blob) => {
+            readBlob(blob, setTaking)
+          }, 'image/png')
+        })
+      }
     }
 
     function closeCamera () {
-      if (videoTrack) videoTrack.stop()
+      if (stream) {
+        const track = stream.getVideoTracks()[0]
+        track.stop()
+      }
       setShowCamera(false)
-      setVideoTrack(null)
+      setStream(null)
     }
 
     function readBlob (blob, progress) {
@@ -326,6 +351,27 @@ video {
       })
     }
 
+    const [ dragActive, setDragActive ] = useState(false)
+
+    function handleDrag (e) {
+      e.preventDefault()
+      e.stopPropagation()
+      if (e.type === 'dragenter' || e.type === 'dragover') {
+        setDragActive(true)
+      } else if (e.type === 'dragleave') {
+        setDragActive(false)
+      }
+    }
+
+    function onDrop (e) {
+      e.preventDefault()
+      e.stopPropagation()
+      setDragActive(false)
+      if (e.dataTransfer.files && e.dataTransfer.files[0]) {
+        fileChanged(e)
+      }
+    }
+
     return html`
       <div class="main">
         ${showCamera && html`<div class="camera">
@@ -337,22 +383,25 @@ video {
         </div>`}
         <div class="input" data-reading=${reading}>
           <input type="file" onChange=${fileChanged} disabled=${!!reading} />
+          ${navigator.clipboard && navigator.clipboard.read && html`
           <span style="margin: 0 10px">or</span>
           <button onClick=${readClipboard} disabled=${!!processing}>
             Read from clipboard ${processing ? `(${processing})` : ''}
           </button>
+          `}
           <span style="margin: 0 10px">or</span>
           <button onClick=${readCamera} disabled=${!!taking}>
             Read from camera
           </button>
         </div>
-        <div class="result-area" ref=${resultArea}></div>
+        <div className=${'result-area' + (dragActive ? ' active' : '')} ref=${resultArea}
+          onDragEnter=${handleDrag} onDragLeave=${handleDrag} onDragOver=${handleDrag} onDrop=${onDrop}></div>
         <button class="select-all" onClick=${selectAll}>Select All</button>
         <div class="photos">
           ${photos.length > 0 && html`<div style="text-align: center; font-size: 12px">QR codes from <a
             href="https://commons.wikimedia.org/wiki/Category:Quick_Response_Codes"
             target="_blank">Wikimedia Commons</a>. Right click image to copy
-            and click "Read from clipboard" to decode.</div>
+            and click "Read from clipboard" or drag image to result area to decode.</div>
             ${photos.map(photo => (
               html`<a href=${photo[1]} target="_blank"><img src=${photo[0]} /></a>`
             ))}`}
