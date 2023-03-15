@@ -372,6 +372,23 @@ video {
       }
     }
 
+    function handleImageDrag (e) {
+      const img = e.target.tagName === 'IMG' ? e.target : e.target.querySelector('img')
+      const canvas = document.createElement('canvas')
+      const context = canvas.getContext('2d')
+      const image = new Image()
+      image.crossOrigin = 'anonymous'
+      image.onload = event => {
+        canvas.width = img.naturalWidth
+        canvas.height = img.naturalHeight
+        context.drawImage(image, 0, 0, img.naturalWidth, img.naturalHeight)
+        canvas.toBlob(blob => {
+          readBlob(blob, setReading)
+        }, 'image/png')
+      }
+      image.src = img.src
+    }
+
     return html`
       <div class="main">
         ${showCamera && html`<div class="camera">
@@ -403,7 +420,7 @@ video {
             target="_blank">Wikimedia Commons</a>. Right click image to copy
             and click "Read from clipboard" or drag image to result area to decode.</div>
             ${photos.map(photo => (
-              html`<a href=${photo[1]} target="_blank"><img src=${photo[0]} /></a>`
+              html`<a href=${photo[1]} target="_blank" onDragEnd=${handleImageDrag}><img src=${photo[0]} /></a>`
             ))}`}
         </div>
         <div style="margin-top: 10px; font-size: 10px">
